@@ -1,0 +1,2500 @@
+<html>
+<body style='background: #000;'>
+<canvas style='width: 100%; height: 100%' id='canvas'></canvas>
+<script>
+
+// global variables
+// ----
+
+var score = 100
+var scoreFontSize = 2
+var peakScore = 100
+var snake = [[0,0]]
+var snakeDirections = [[1,0]]
+var snakeSizes = [1]
+var nextSnakeDirection = [1,0]
+var nextSnakeSize = 1
+var food = []
+var tileSize = 30 // pixels
+var tileFill = '#000'
+var snakeFill1 = '#055'
+var snakeFill2 = '#c00'
+var foodFill = '#0c0'
+var moveRate = 12
+var frameRate = 120
+var foodRarity = 20 // how rare is food? 1 = not rare at all
+var foodMaxAge = 10000
+
+var keyDirectionMap = {}
+keyDirectionMap[37] = [-1,0] // left
+keyDirectionMap[38] = [0,-1]  // up
+keyDirectionMap[39] = [1,0]  // right
+keyDirectionMap[40] = [0,1] // down
+keyDirectionMap[32] = [1,1] // down
+
+//var cmap = ['#0f0f0f','#0f300f','#0f0f0f','#0f300f','#0f0f0f','#20300f','#0f0f0f','#20300f']
+var cmap = ['#0a200a','#0a300a']
+
+// Calculated/obtained variables
+// ----
+
+var frameTime = 1000/frameRate
+var framesPerTile = parseInt(frameRate / moveRate)
+var subTileSize = parseInt(tileSize / framesPerTile)
+var subTilesPerTile = parseInt(tileSize / subTileSize)
+tileSize = subTileSize * subTilesPerTile
+var canvas = document.getElementById('canvas')
+var ctx = canvas.getContext('2d')
+var tilesWide = Math.floor(canvas.width / tileSize)
+var tilesTall = Math.floor(canvas.height / tileSize)
+tilesWide = 20
+tilesTall = 20
+var sbOffset = 15 * scoreFontSize
+
+var vigGradient = ctx.createRadialGradient(
+	(tileSize/2) + ((tileSize*tilesWide)/2),
+	sbOffset + ((tileSize*tilesTall)/2),
+	0,
+	(tileSize/2) + ((tileSize*tilesWide)/2),
+	sbOffset + ((tileSize*tilesTall)/2),
+	(tileSize*tilesWide)/2
+)
+vigGradient.addColorStop(0, "#00000000");
+vigGradient.addColorStop(0.5, "#00000000");
+vigGradient.addColorStop(1, "#00000055");
+
+function drawGrids() {
+	ctx.globalAlpha = 0.8
+
+	let z = 0
+	for (let x=0; x<=tilesWide; x++) {
+		for (let y=0; y<=tilesTall; y++) {
+			let x0 = (x * tileSize) + 1 - (tileSize/2)
+			let y0 = (y * tileSize) + 1 - (tileSize/2) + sbOffset
+			let w = tileSize - 2
+			let h = tileSize - 2
+			ctx.fillStyle = cmap[z]
+			z = (z + 1) % 2
+			ctx.fillRect(x0, y0, w, h)
+		}
+	}
+	
+
+}
+
+function clearCanvas() {
+	canvas.width = canvas.clientWidth
+	canvas.height = canvas.clientHeight
+	ctx.clearRect(0,0,canvas.width,canvas.height)
+	drawGrids()
+	ctx.fillStyle = vigGradient
+	ctx.fillRect(
+		tileSize/2,
+		sbOffset+tileSize/2,
+		tileSize*tilesWide,
+		tileSize*tilesTall,
+	)
+		
+	//tilesWide = Math.floor(canvas.width / tileSize)
+	//tilesTall = Math.floor(canvas.height / tileSize)
+}
+
+function comparePoints(point1, point2) {
+	if (point1[0] != point2[0]) { return false }
+	if (point1[1] != point2[1]) { return false }
+	return true
+}
+
+function randomInt(min, max) {
+    min = Math.ceil(min);
+    max = Math.floor(max);
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function updateSnakeDirection() {
+	snakeDirections.unshift(nextSnakeDirection)
+	snakeSizes.unshift(nextSnakeSize)
+	snakeSizes.unshift(nextSnakeSize)
+}
+
+let snakeGrowing = false
+function moveSnake() {
+	let snakeTail = [...snake[snake.length-1]]
+
+	for (let i=0; i<snake.length; i++) {
+		snake[i][0] = ( snake[i][0] + snakeDirections[i][0] ) % (tilesWide * subTilesPerTile)
+		snake[i][1] = ( snake[i][1] + snakeDirections[i][1] ) % (tilesTall * subTilesPerTile)
+		if (snake[i][0] <= 1) { snake[i][0] += ((tilesWide) * subTilesPerTile) }
+		if (snake[i][1] <= 1) { snake[i][1] += ((tilesTall) * subTilesPerTile) }
+	}
+	
+	if (snakeGrowing) {
+		snake[snake.length-1] = snakeTail
+	}
+}
+
+function killSnake() {
+	let eatingSnake = -1
+	snake.forEach( function(s) {
+		if (comparePoints([s[0], s[1]], snake[0])) { 
+			eatingSnake += 1
+		}
+	})
+	
+	if (eatingSnake > 0) {
+		gameOver()
+	}
+}
+
+function growSnake() {	
+	let eatingFood = false
+	food.forEach( function(f) {
+		if (comparePoints([f.x, f.y], snake[0])) { 
+			eatingFood = true
+			removeFood([f.x, f.y])
+		}
+	})
+
+	if (eatingFood) { 
+		snakeGrowing = true
+		snake.push([...snake[snake.length-1]])
+		updateScore(100)
+		nextSnakeSize = 1.5
+	} else {
+		snakeGrowing = false
+		nextSnakeSize = 1.2
+	}
+}
+
+function addFood() {
+	let foodItem = {}
+	foodItem.x = randomInt(1,tilesWide-1) * subTilesPerTile
+	foodItem.y = randomInt(1,tilesTall-1) * subTilesPerTile
+	foodItem.expiry = Date.now() + foodMaxAge
+	food.push(foodItem)
+}
+
+function ageOffFood() {
+	let newFood = []
+	let now = Date.now()
+	
+	food.forEach( function(f) {
+		if ( f.expiry > now ) { 
+			newFood.push(f)
+		}
+	})
+	
+	food = newFood
+}
+
+function removeFood(location) {
+	let newFood = []
+
+	food.forEach( function(f) {
+		if ( !(comparePoints([f.x, f.y], location)) ) { 
+			newFood.push(f)
+		}
+	})
+	
+	food = newFood
+}
+
+function updateFood() {
+	ageOffFood()
+
+	if (randomInt(0,foodRarity) == 0) { 
+		addFood()
+	}
+}
+
+function updateScreen() {
+	clearCanvas()
+	
+	ctx.globalAlpha = 1.0
+	food.forEach( function(foodTile) {
+		let gradient = ctx.createRadialGradient(
+			foodTile.x*subTileSize,
+			sbOffset + (foodTile.y*subTileSize),
+			0,
+			foodTile.x*subTileSize,
+			sbOffset + (foodTile.y*subTileSize),
+			tileSize/2
+		)
+		gradient.addColorStop(0, "#0b0");
+		gradient.addColorStop(1, "#050");
+		ctx.fillStyle = gradient
+
+		ctx.beginPath();
+		ctx.arc( 
+			foodTile.x*subTileSize,
+			sbOffset + (foodTile.y*subTileSize),
+			tileSize/2,
+			0,
+			2 * Math.PI
+		)
+		ctx.fill()
+	})
+	
+	ctx.fillStyle = snakeFill1
+	snake.forEach( function(snakeTile, index) {
+		ctx.beginPath();
+		ctx.arc( 
+			snakeTile[0]*subTileSize,
+			sbOffset + (snakeTile[1]*subTileSize),
+			(tileSize/2) * snakeSizes[index],
+			0,
+			2 * Math.PI
+		)
+		ctx.fill()
+	})
+	
+	ctx.globalAlpha = 1.0
+	ctx.fillStyle = snakeFill2
+	snake.forEach( function(snakeTile, index) {
+		ctx.globalAlpha -= (1/snake.length)
+		ctx.beginPath();
+		ctx.arc( 
+			snakeTile[0]*subTileSize,
+			sbOffset + (snakeTile[1]*subTileSize),
+			(tileSize/2) * snakeSizes[index],
+			0,
+			2 * Math.PI
+		)
+		ctx.fill()
+	})
+	
+	ctx.globalAlpha = 0.2
+	snake.forEach( function(snakeTile, index) {
+		let gradient = ctx.createRadialGradient(
+			snakeTile[0]*subTileSize,
+			sbOffset + (snakeTile[1]*subTileSize),
+			0,
+			snakeTile[0]*subTileSize,
+			sbOffset + (snakeTile[1]*subTileSize),
+			(tileSize/2) * snakeSizes[index]
+		)
+		gradient.addColorStop(0, "#fff");
+		gradient.addColorStop(1, "#000");
+		ctx.fillStyle = gradient
+	
+		ctx.beginPath();
+		ctx.arc( 
+			snakeTile[0]*subTileSize,
+			sbOffset + (snakeTile[1]*subTileSize),
+			(tileSize/2) * snakeSizes[index],
+			0,
+			2 * Math.PI
+		)
+		ctx.fill()
+
+	})
+	
+	ctx.fillStyle = vigGradient
+	ctx.fillRect(
+		tileSize/2,
+		sbOffset+tileSize/2,
+		tileSize*tilesWide,
+		tileSize*tilesTall,
+	)
+	
+	ctx.globalAlpha = 1.0
+	ctx.fillStyle = '#000'
+	ctx.fillRect(0, 0, canvas.width, sbOffset + (tileSize/2))
+	ctx.fillRect(0, 0, tileSize/2, canvas.height)
+	ctx.fillStyle = '#fff'
+	writeString(tileSize/2, 5, "SCORE: " + score)
+	writeString(tileSize/2, 5 + (9		*scoreFontSize), " PEAK: " + peakScore)
+}
+
+function resetGame() {
+	console.log('resetting game')
+	score = 100
+	scoreFontSize = 2
+	peakScore = 100
+	snake = [[0,0]]
+	snakeDirections = [[1,0]]
+	snakeSizes = [1]
+	nextSnakeDirection = [1,0]
+	nextSnakeSize = 1
+	food = []
+	frameNumber = 0
+	gameRunning = true
+	initialGrow = 5
+	update()
+}
+
+function gameOver() {
+	gameRunning = false
+}
+
+function gameOverScreen() {
+	ctx.fillStyle = '#500'
+	ctx.globalAlpha = 0.5
+	ctx.fillRect(
+		tileSize/2,
+		sbOffset+tileSize/2,
+		tileSize*tilesWide,
+		tileSize*tilesTall,
+	)
+	
+	ctx.globalAlpha = 1.0
+	ctx.fillStyle = '#000'
+	ctx.fillRect(0, 0, canvas.width, sbOffset + (tileSize/2))
+	ctx.fillRect(0, 0, tileSize/2, canvas.height)
+	ctx.fillStyle = '#fff'
+	
+	let cX = (tileSize/2) + ((tileSize*tilesWide)/2)
+	let cY = sbOffset + ((tileSize*tilesTall)/2)
+	
+	let gameOverString = "GAME OVER"
+	let scoreString = "SCORE: " + peakScore
+	let restartString = "PRESS <SPACE> TO RESTART"
+	
+	writeString(cX-(30*gameOverString.length/2), cY-30, gameOverString, 5)
+	writeString(cX-(30*scoreString.length/2), cY-30 + 60, scoreString, 5)
+	
+	writeString(cX-(18*restartString.length/2), cY-30 + 180, restartString, 3)
+	
+}
+
+let frameNumber = 0
+let gameRunning = true
+let initialGrow = 5
+let rotation = 0
+function update() {
+	if (frameNumber == 0) {
+		updateSnakeDirection()
+		growSnake()
+		updateFood()
+		updateScore(-1)
+		if (initialGrow > 0) {
+			if (initialGrow < 5) {
+				snakeGrowing = true
+				snake.push([...snake[snake.length-1]])
+				}
+			initialGrow -= 1
+		}
+	}
+	
+	frameNumber = (frameNumber + 1) % framesPerTile
+
+	moveSnake()
+	killSnake()
+	updateScreen()
+
+
+	
+	if (gameRunning) {
+		setTimeout(update, frameTime)
+	} else {
+		gameOverScreen()
+	}
+}
+
+function updateScore(ammount) {
+	score += ammount
+	if (score > peakScore) { peakScore = score }
+}
+
+window.addEventListener('keydown', function (e) {
+	let pk = keyDirectionMap[e.keyCode]
+	
+	if (e.keyCode == 32 & (!gameRunning)) {
+		resetGame()
+	}
+	
+	if ( Math.abs(pk[0]) + Math.abs( snakeDirections[0][0] ) > 1 ) {
+		return null
+	}
+	
+	if ( Math.abs(pk[1]) + Math.abs( snakeDirections[0][1] ) > 1 ) {
+		return null
+	}
+	
+	nextSnakeDirection = pk
+	
+
+})
+
+function writeChar(x, y, charCode, fontSize) {
+	let pixels = chars[charCode]
+	pixels.forEach( function(pixel) {
+		ctx.fillRect(x+pixel[0]*fontSize,y+pixel[1]*fontSize,fontSize,fontSize)
+	})
+}
+
+function writeString(x, y, string, fontSize=scoreFontSize) {
+	
+	for (let i = 0; i < string.length; i++) {
+		writeChar( x, y, string.charCodeAt(i), fontSize)
+		x += (6 * fontSize)
+	}
+}
+
+let characterBitmap = `
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.XXX.
+XXXXX
+X.X.X
+XXXXX
+XX.XX
+X...X
+.XXX.
+.....
+.XXX.
+XXXXX
+X.X.X
+XXXXX
+X...X
+XX.XX
+.XXX.
+.....
+.....
+.X.X.
+XXXXX
+XXXXX
+XXXXX
+.XXX.
+..X..
+.....
+.....
+..X..
+.XXX.
+XXXXX
+XXXXX
+.XXX.
+..X..
+.....
+.XXX.
+.X.X.
+XXXXX
+X.X.X
+XXXXX
+..X..
+.XXX.
+.....
+..X..
+.XXX.
+XXXXX
+XXXXX
+XXXXX
+..X..
+.XXX.
+.....
+.....
+.....
+..X..
+.XXX.
+.XXX.
+..X..
+.....
+.....
+XXXXX
+XXXXX
+XX.XX
+X...X
+X...X
+XX.XX
+XXXXX
+XXXXX
+.....
+.....
+..X..
+.X.X.
+.X.X.
+..X..
+.....
+.....
+XXXXX
+XXXXX
+XX.XX
+X.X.X
+X.X.X
+XX.XX
+XXXXX
+XXXXX
+.....
+..XXX
+...XX
+.XX.X
+X.X..
+X.X..
+.X...
+.....
+.XXX.
+X...X
+X...X
+.XXX.
+..X..
+XXXXX
+..X..
+.....
+.XXXX
+.X..X
+.XXXX
+.X...
+.X...
+.X...
+XX...
+.....
+.XXXX
+.X..X
+.XXXX
+.X..X
+.X..X
+.X.XX
+XX...
+.....
+..X..
+X.X.X
+.XXX.
+XX.XX
+XX.XX
+.XXX.
+X.X.X
+..X..
+X....
+XX...
+XXXX.
+XXXXX
+XXXX.
+XX...
+X....
+.....
+....X
+...XX
+.XXXX
+XXXXX
+.XXXX
+...XX
+....X
+.....
+..X..
+.XXX.
+X.X.X
+..X..
+X.X.X
+.XXX.
+..X..
+.....
+XX.XX
+XX.XX
+XX.XX
+XX.XX
+XX.XX
+.....
+XX.XX
+.....
+.XXXX
+X.X.X
+X.X.X
+.XX.X
+..X.X
+..X.X
+..X.X
+.....
+..XX.
+.X..X
+.X.X.
+..X.X
+...X.
+.X..X
+.X..X
+..XX.
+.....
+.....
+.....
+.....
+.....
+XXXXX
+XXXXX
+.....
+..X..
+.XXX.
+X.X.X
+..X..
+X.X.X
+.XXX.
+..X..
+XXXXX
+.....
+..X..
+.XXX.
+X.X.X
+..X..
+..X..
+..X..
+.....
+.....
+..X..
+..X..
+..X..
+X.X.X
+.XXX.
+..X..
+.....
+.....
+..X..
+...X.
+XXXXX
+...X.
+..X..
+.....
+.....
+.....
+..X..
+.X...
+XXXXX
+.X...
+..X..
+.....
+.....
+.....
+X....
+X....
+X....
+XXXXX
+.....
+.....
+.....
+.....
+.X.X.
+XXXXX
+XXXXX
+.X.X.
+.....
+.....
+.....
+.....
+..X..
+..X..
+.XXX.
+XXXXX
+XXXXX
+.....
+.....
+.....
+XXXXX
+XXXXX
+.XXX.
+..X..
+..X..
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+..X..
+..X..
+..X..
+..X..
+..X..
+.....
+..X..
+.....
+.X.X.
+.X.X.
+.X.X.
+.....
+.....
+.....
+.....
+.....
+.X.X.
+.X.X.
+XXXXX
+.X.X.
+XXXXX
+.X.X.
+.X.X.
+.....
+..X..
+.XXXX
+X.X..
+.XXX.
+..X.X
+XXXX.
+..X..
+.....
+XX...
+XX..X
+...X.
+..X..
+.X...
+X..XX
+...XX
+.....
+.X...
+X.X..
+X.X..
+.X...
+X.X.X
+X..X.
+.XX.X
+.....
+..XX.
+..XX.
+..X..
+.X...
+.....
+.....
+.....
+.....
+...X.
+..X..
+.X...
+.X...
+.X...
+..X..
+...X.
+.....
+.X...
+..X..
+...X.
+...X.
+...X.
+..X..
+.X...
+.....
+..X..
+X.X.X
+.XXX.
+XXXXX
+.XXX.
+X.X.X
+..X..
+.....
+.....
+..X..
+..X..
+XXXXX
+..X..
+..X..
+.....
+.....
+.....
+.....
+.....
+.....
+..XX.
+..XX.
+..X..
+.X...
+.....
+.....
+.....
+XXXXX
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+..XX.
+..XX.
+.....
+.....
+....X
+...X.
+..X..
+.X...
+X....
+.....
+.....
+.XXX.
+X...X
+X..XX
+X.X.X
+XX..X
+X...X
+.XXX.
+.....
+..X..
+.XX..
+..X..
+..X..
+..X..
+..X..
+.XXX.
+.....
+.XXX.
+X...X
+....X
+.XXX.
+X....
+X....
+XXXXX
+.....
+XXXXX
+....X
+...X.
+..XX.
+....X
+X...X
+.XXX.
+.....
+...X.
+..XX.
+.X.X.
+X..X.
+XXXXX
+...X.
+...X.
+.....
+XXXXX
+X....
+XXXX.
+....X
+....X
+X...X
+.XXX.
+.....
+..XXX
+.X...
+X....
+XXXX.
+X...X
+X...X
+.XXX.
+.....
+XXXXX
+....X
+....X
+...X.
+..X..
+.X...
+X....
+.....
+.XXX.
+X...X
+X...X
+.XXX.
+X...X
+X...X
+.XXX.
+.....
+.XXX.
+X...X
+X...X
+.XXXX
+....X
+...X.
+XXX..
+.....
+.....
+.....
+..X..
+.....
+..X..
+.....
+.....
+.....
+.....
+.....
+..X..
+.....
+..X..
+..X..
+.X...
+.....
+....X
+...X.
+..X..
+.X...
+..X..
+...X.
+....X
+.....
+.....
+.....
+XXXXX
+.....
+XXXXX
+.....
+.....
+.....
+.X...
+..X..
+...X.
+....X
+...X.
+..X..
+.X...
+.....
+.XXX.
+X...X
+....X
+..XX.
+..X..
+.....
+..X..
+.....
+.XXX.
+X...X
+X.X.X
+X.XXX
+X.XX.
+X....
+.XXXX
+.....
+..X..
+.X.X.
+X...X
+X...X
+XXXXX
+X...X
+X...X
+.....
+XXXX.
+X...X
+X...X
+XXXX.
+X...X
+X...X
+XXXX.
+.....
+.XXX.
+X...X
+X....
+X....
+X....
+X...X
+.XXX.
+.....
+XXXX.
+X...X
+X...X
+X...X
+X...X
+X...X
+XXXX.
+.....
+XXXXX
+X....
+X....
+XXXX.
+X....
+X....
+XXXXX
+.....
+XXXXX
+X....
+X....
+XXXX.
+X....
+X....
+X....
+.....
+.XXXX
+X...X
+X....
+X....
+X..XX
+X...X
+.XXXX
+.....
+X...X
+X...X
+X...X
+XXXXX
+X...X
+X...X
+X...X
+.....
+.XXX.
+..X..
+..X..
+..X..
+..X..
+..X..
+.XXX.
+.....
+..XXX
+...X.
+...X.
+...X.
+...X.
+X..X.
+.XX..
+.....
+X...X
+X..X.
+X.X..
+XX...
+X.X..
+X..X.
+X...X
+.....
+X....
+X....
+X....
+X....
+X....
+X....
+XXXXX
+.....
+X...X
+XX.XX
+X.X.X
+X.X.X
+X.X.X
+X...X
+X...X
+.....
+X...X
+X...X
+XX..X
+X.X.X
+X..XX
+X...X
+X...X
+.....
+.XXX.
+X...X
+X...X
+X...X
+X...X
+X...X
+.XXX.
+.....
+XXXX.
+X...X
+X...X
+XXXX.
+X....
+X....
+X....
+.....
+.XXX.
+X...X
+X...X
+X...X
+X.X.X
+X..X.
+.XX.X
+.....
+XXXX.
+X...X
+X...X
+XXXX.
+X.X..
+X..X.
+X...X
+.....
+.XXX.
+X...X
+X....
+.XXX.
+....X
+X...X
+.XXX.
+.....
+XXXXX
+X.X.X
+..X..
+..X..
+..X..
+..X..
+..X..
+.....
+X...X
+X...X
+X...X
+X...X
+X...X
+X...X
+.XXX.
+.....
+X...X
+X...X
+X...X
+X...X
+X...X
+.X.X.
+..X..
+.....
+X...X
+X...X
+X...X
+X.X.X
+X.X.X
+X.X.X
+.X.X.
+.....
+X...X
+X...X
+.X.X.
+..X..
+.X.X.
+X...X
+X...X
+.....
+X...X
+X...X
+.X.X.
+..X..
+..X..
+..X..
+..X..
+.....
+XXXXX
+....X
+...X.
+.XXX.
+.X...
+X....
+XXXXX
+.....
+.XXXX
+.X...
+.X...
+.X...
+.X...
+.X...
+.XXXX
+.....
+.....
+X....
+.X...
+..X..
+...X.
+....X
+.....
+.....
+.XXXX
+....X
+....X
+....X
+....X
+....X
+.XXXX
+.....
+..X..
+.X.X.
+X...X
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+XXXXX
+.....
+.XX..
+.XX..
+..X..
+...X.
+.....
+.....
+.....
+.....
+.....
+.....
+.XX..
+...X.
+.XXX.
+X..X.
+.XXXX
+.....
+X....
+X....
+X.XX.
+XX..X
+X...X
+XX..X
+X.XX.
+.....
+.....
+.....
+.XXX.
+X...X
+X....
+X...X
+.XXX.
+.....
+....X
+....X
+.XX.X
+X..XX
+X...X
+X..XX
+.XX.X
+.....
+.....
+.....
+.XXX.
+X...X
+XXXXX
+X....
+.XXX.
+.....
+...X.
+..X.X
+..X..
+.XXX.
+..X..
+..X..
+..X..
+.....
+.....
+.....
+.XXX.
+X..XX
+X..XX
+.XX.X
+....X
+.XXX.
+X....
+X....
+X.XX.
+XX..X
+X...X
+X...X
+X...X
+.....
+..X..
+.....
+.XX..
+..X..
+..X..
+..X..
+.XXX.
+.....
+...X.
+.....
+...X.
+...X.
+...X.
+X..X.
+.XX..
+.....
+X....
+X....
+X..X.
+X.X..
+XX...
+X.X..
+X..X.
+.....
+.XX..
+..X..
+..X..
+..X..
+..X..
+..X..
+.XXX.
+.....
+.....
+.....
+XX.X.
+X.X.X
+X.X.X
+X.X.X
+X.X.X
+.....
+.....
+.....
+X.XX.
+XX..X
+X...X
+X...X
+X...X
+.....
+.....
+.....
+.XXX.
+X...X
+X...X
+X...X
+.XXX.
+.....
+.....
+.....
+X.XX.
+XX..X
+XX..X
+X.XX.
+X....
+X....
+.....
+.....
+.XX.X
+X..XX
+X..XX
+.XX.X
+....X
+....X
+.....
+.....
+X.XX.
+XX..X
+X....
+X....
+X....
+.....
+.....
+.....
+.XXXX
+X....
+.XXX.
+....X
+XXXX.
+.....
+..X..
+..X..
+XXXXX
+..X..
+..X..
+..X.X
+...X.
+.....
+.....
+.....
+X...X
+X...X
+X...X
+X..XX
+.XX.X
+.....
+.....
+.....
+X...X
+X...X
+X...X
+.X.X.
+..X..
+.....
+.....
+.....
+X...X
+X...X
+X.X.X
+X.X.X
+.X.X.
+.....
+.....
+.....
+X...X
+.X.X.
+..X..
+.X.X.
+X...X
+.....
+.....
+.....
+X...X
+X...X
+.XXXX
+....X
+X...X
+.XXX.
+.....
+.....
+XXXXX
+...X.
+..X..
+.X...
+XXXXX
+.....
+...X.
+..X..
+..X..
+.X...
+..X..
+..X..
+...X.
+.....
+..X..
+..X..
+..X..
+.....
+..X..
+..X..
+..X..
+.....
+.X...
+..X..
+..X..
+...X.
+..X..
+..X..
+.X...
+.....
+.X...
+X.X.X
+...X.
+.....
+.....
+.....
+.....
+.....
+..X..
+.XXX.
+XX.XX
+X...X
+X...X
+XXXXX
+.....
+.....
+.XXX.
+X...X
+X....
+X....
+X...X
+.XXX.
+...X.
+.XX..
+.....
+X...X
+.....
+X...X
+X...X
+X..XX
+.XX.X
+.....
+...XX
+.....
+.XXX.
+X...X
+XXXXX
+X....
+.XXXX
+.....
+XXXXX
+.....
+.XX..
+...X.
+.XXX.
+X..X.
+.XXXX
+.....
+X...X
+.....
+.XX..
+...X.
+.XXX.
+X..X.
+.XXXX
+.....
+XX...
+.....
+.XX..
+...X.
+.XXX.
+X..X.
+.XXXX
+.....
+..XX.
+.....
+.XX..
+...X.
+.XXX.
+X..X.
+.XXXX
+.....
+.....
+.XXXX
+XX...
+XX...
+.XXXX
+...X.
+..XX.
+.....
+XXXXX
+.....
+.XXX.
+X...X
+XXXXX
+X....
+.XXXX
+.....
+X...X
+.....
+.XXX.
+X...X
+XXXXX
+X....
+.XXXX
+.....
+XX...
+.....
+.XXX.
+X...X
+XXXXX
+X....
+.XXXX
+.....
+..X.X
+.....
+..XX.
+...X.
+...X.
+...X.
+..XXX
+.....
+..XX.
+.X..X
+..XX.
+...X.
+...X.
+...X.
+..XXX
+.....
+.XX..
+.....
+..XX.
+...X.
+...X.
+...X.
+..XXX
+.....
+.X.X.
+.....
+..X..
+.X.X.
+X...X
+XXXXX
+X...X
+X...X
+..X..
+.....
+..X..
+.X.X.
+X...X
+XXXXX
+X...X
+X...X
+..XX.
+.....
+XXXX.
+X....
+XXX..
+X....
+XXXX.
+.....
+.....
+.....
+.XXXX
+...X.
+.XXXX
+X..X.
+.XXXX
+.....
+..XXX
+.X.X.
+X..X.
+XXXXX
+X..X.
+X..X.
+X..XX
+.....
+.XXX.
+X...X
+.....
+.XXX.
+X...X
+X...X
+.XXX.
+.....
+.....
+X...X
+.....
+.XXX.
+X...X
+X...X
+.XXX.
+.....
+.....
+XX...
+.....
+.XXX.
+X...X
+X...X
+.XXX.
+.....
+.XXX.
+X...X
+.....
+X...X
+X...X
+X..XX
+.XX.X
+.....
+.....
+XX...
+.....
+X...X
+X...X
+X..XX
+.XX.X
+.....
+.X..X
+.....
+.X..X
+.X..X
+.X..X
+..XXX
+....X
+.XXX.
+X...X
+.....
+.XXX.
+X...X
+X...X
+X...X
+.XXX.
+.....
+X...X
+.....
+X...X
+X...X
+X...X
+X...X
+.XXX.
+.....
+..X..
+..X..
+XXXXX
+X.X..
+X.X..
+XXXXX
+..X..
+..X..
+..XX.
+.X.XX
+.X..X
+XXX..
+.X...
+.X..X
+XXXXX
+.....
+XX.XX
+XX.XX
+.XXX.
+XXXXX
+..X..
+XXXXX
+..X..
+..X..
+XXX..
+X..X.
+X..X.
+XXX..
+X..X.
+X.XXX
+X..X.
+X..X.
+...XX
+..X.X
+..X..
+.XXX.
+..X..
+..X..
+X.X..
+XX...
+...XX
+.....
+.XX..
+...X.
+.XXX.
+X..X.
+.XXXX
+.....
+...XX
+.....
+..XX.
+...X.
+...X.
+...X.
+..XXX
+.....
+.....
+...XX
+.....
+.XXX.
+X...X
+X...X
+.XXX.
+.....
+.....
+...XX
+.....
+X...X
+X...X
+X..XX
+.XX.X
+.....
+.....
+.XXXX
+.....
+.XXX.
+.X..X
+.X..X
+.X..X
+.....
+XXXXX
+.....
+XX..X
+XXX.X
+X.XXX
+X..XX
+X...X
+.....
+.XXX.
+X..X.
+X..X.
+.XXXX
+.....
+XXXXX
+.....
+.....
+.XXX.
+X...X
+X...X
+.XXX.
+.....
+XXXXX
+.....
+.....
+..X..
+.....
+..X..
+.XX..
+X....
+X...X
+.XXX.
+.....
+.....
+.....
+.....
+XXXXX
+X....
+X....
+.....
+.....
+.....
+.....
+.....
+XXXXX
+....X
+....X
+.....
+.....
+X....
+X...X
+X..X.
+X.XXX
+.X..X
+X..XX
+..X..
+..XXX
+X....
+X...X
+X..X.
+X.X.X
+.X.XX
+X.XXX
+....X
+....X
+..X..
+..X..
+.....
+..X..
+..X..
+..X..
+..X..
+.....
+.....
+..X.X
+.X.X.
+X.X..
+.X.X.
+..X.X
+.....
+.....
+.....
+X.X..
+.X.X.
+..X.X
+.X.X.
+X.X..
+.....
+.....
+..X..
+X...X
+..X..
+X...X
+..X..
+X...X
+..X..
+X...X
+.X.X.
+X.X.X
+.X.X.
+X.X.X
+.X.X.
+X.X.X
+.X.X.
+X.X.X
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+XXXX.
+...X.
+...X.
+...X.
+...X.
+...X.
+XXXX.
+...X.
+XXXX.
+...X.
+...X.
+...X.
+..X.X
+..X.X
+..X.X
+..X.X
+XXX.X
+..X.X
+..X.X
+..X.X
+.....
+.....
+.....
+.....
+XXXXX
+..X.X
+..X.X
+..X.X
+.....
+.....
+XXXX.
+...X.
+XXXX.
+...X.
+...X.
+...X.
+..X.X
+..X.X
+XXX.X
+....X
+XXX.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+.....
+.....
+XXXXX
+....X
+XXX.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+XXX.X
+....X
+XXXXX
+.....
+.....
+.....
+..X.X
+..X.X
+..X.X
+..X.X
+XXXXX
+.....
+.....
+.....
+...X.
+...X.
+XXXX.
+...X.
+XXXX.
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+XXXX.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...XX
+.....
+.....
+.....
+...X.
+...X.
+...X.
+...X.
+XXXXX
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+XXXXX
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...XX
+...X.
+...X.
+...X.
+.....
+.....
+.....
+.....
+XXXXX
+.....
+.....
+.....
+...X.
+...X.
+...X.
+...X.
+XXXXX
+...X.
+...X.
+...X.
+...X.
+...X.
+...XX
+...X.
+...XX
+...X.
+...X.
+...X.
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X..
+..XXX
+.....
+.....
+.....
+.....
+.....
+..XXX
+..X..
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+XXX.X
+.....
+XXXXX
+.....
+.....
+.....
+.....
+.....
+XXXXX
+.....
+XXX.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X..
+..X.X
+..X.X
+..X.X
+..X.X
+.....
+.....
+XXXXX
+.....
+XXXXX
+.....
+.....
+.....
+..X.X
+..X.X
+XXX.X
+.....
+XXX.X
+..X.X
+..X.X
+..X.X
+...X.
+...X.
+XXXXX
+.....
+XXXXX
+.....
+.....
+.....
+..X.X
+..X.X
+..X.X
+..X.X
+XXXXX
+.....
+.....
+.....
+.....
+.....
+XXXXX
+.....
+XXXXX
+...X.
+...X.
+...X.
+.....
+.....
+.....
+.....
+XXXXX
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..XXX
+.....
+.....
+.....
+...X.
+...X.
+...XX
+...X.
+...XX
+.....
+.....
+.....
+.....
+.....
+...XX
+...X.
+...XX
+...X.
+...X.
+...X.
+.....
+.....
+.....
+.....
+..XXX
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+..X.X
+XXXXX
+..X.X
+..X.X
+..X.X
+...X.
+...X.
+XXXXX
+...X.
+XXXXX
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+...X.
+XXXX.
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+...XX
+...X.
+...X.
+...X.
+XXXXX
+XXXXX
+XXXXX
+XXXXX
+XXXXX
+XXXXX
+XXXXX
+XXXXX
+.....
+.....
+.....
+.....
+XXXXX
+XXXXX
+XXXXX
+XXXXX
+XXX..
+XXX..
+XXX..
+XXX..
+XXX..
+XXX..
+XXX..
+XXX..
+...XX
+...XX
+...XX
+...XX
+...XX
+...XX
+...XX
+...XX
+XXXXX
+XXXXX
+XXXXX
+XXXXX
+.....
+.....
+.....
+.....
+.....
+.....
+.XX.X
+X..X.
+X..X.
+X..X.
+.XX.X
+.....
+.....
+.XXX.
+X..XX
+XXXX.
+X..XX
+XXXX.
+X....
+.....
+.....
+XXXXX
+X..XX
+X....
+X....
+X....
+X....
+.....
+.....
+XXXXX
+.X.X.
+.X.X.
+.X.X.
+.X.X.
+.X.X.
+.....
+XXXXX
+X...X
+.X...
+..X..
+.X...
+X...X
+XXXXX
+.....
+.....
+.....
+.XXXX
+X..X.
+X..X.
+X..X.
+.XX..
+.....
+.....
+.X.X.
+.X.X.
+.X.X.
+.X.X.
+.XX.X
+XX...
+.....
+.....
+XXXXX
+X.X..
+..X..
+..X..
+..X..
+..X..
+.....
+XXXXX
+..X..
+.XXX.
+X...X
+X...X
+.XXX.
+..X..
+XXXXX
+..X..
+.X.X.
+X...X
+XXXXX
+X...X
+.X.X.
+..X..
+.....
+..X..
+.X.X.
+X...X
+X...X
+.X.X.
+.X.X.
+XX.XX
+.....
+..XX.
+.X...
+..XX.
+.XXX.
+X...X
+X...X
+.XXX.
+.....
+.....
+.....
+.....
+.XXX.
+X.X.X
+X.X.X
+.XXX.
+.....
+....X
+.XXX.
+X..XX
+X.X.X
+X.X.X
+XX..X
+.XXX.
+X....
+.XXX.
+X....
+X....
+XXXX.
+X....
+X....
+.XXX.
+.....
+.XXX.
+X...X
+X...X
+X...X
+X...X
+X...X
+X...X
+.....
+.....
+XXXXX
+.....
+XXXXX
+.....
+XXXXX
+.....
+.....
+..X..
+..X..
+XXXXX
+..X..
+..X..
+.....
+XXXXX
+.....
+.X...
+..X..
+...X.
+..X..
+.X...
+.....
+XXXXX
+.....
+...X.
+..X..
+.X...
+..X..
+...X.
+.....
+XXXXX
+.....
+..XXX
+..X.X
+..X..
+..X..
+..X..
+..X..
+..X..
+..X..
+..X..
+..X..
+..X..
+..X..
+..X..
+X.X..
+X.X..
+XXX..
+..XX.
+..XX.
+.....
+XXXXX
+.....
+..XX.
+..XX.
+.....
+.....
+XXX.X
+X.XXX
+.....
+XXX.X
+X.XXX
+.....
+.....
+.XXX.
+XX.XX
+XX.XX
+.XXX.
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+..XX.
+..XX.
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+..XX.
+.....
+.....
+.....
+..XXX
+..X..
+..X..
+..X..
+X.X..
+X.X..
+.XX..
+..X..
+.XXX.
+.X..X
+.X..X
+.X..X
+.X..X
+.....
+.....
+.....
+.XXX.
+...XX
+..XX.
+.XX..
+.XXXX
+.....
+.....
+.....
+.....
+.....
+.XXXX
+.XXXX
+.XXXX
+.XXXX
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+`
+
+characterBitmap = characterBitmap.replace(/(\r\n|\n|\r)/gm, "")
+let characterMap = []
+let chars = []
+
+for (let i=0; i<characterBitmap.length; i+=40) {
+	characterMap.push( characterBitmap.slice(i, i+40) )
+}
+
+characterMap.forEach( function(character) {
+	let pixelMap = []
+	for (let i = 0; i < character.length; i++) {
+		let x = i % 5
+		let y = Math.floor(i / 5)
+  		if (character[i] == 'X') {
+  			pixelMap.push( [x,y] )
+  		}
+ 	}
+  	chars.push(pixelMap)
+})
+
+update()
+growSnake()
+
+</script>

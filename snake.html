@@ -1,6 +1,15 @@
 <html>
+<head>
+<style>
+button { 
+	background: #000;
+	color: #fff;
+	border: 1px solid white;
+}
+</style>
+</head>
 <body style='background: #000;'>
-<canvas style='width: 100%; height: 100%' id='canvas'></canvas>
+<canvas style='width: 100%; height: 90%' id='canvas'></canvas>
 <script>
 
 // global variables
@@ -30,7 +39,11 @@ keyDirectionMap[37] = [-1,0] // left
 keyDirectionMap[38] = [0,-1]  // up
 keyDirectionMap[39] = [1,0]  // right
 keyDirectionMap[40] = [0,1] // down
-keyDirectionMap[32] = [1,1] // down
+keyDirectionMap[32] = [1,1] // space
+keyDirectionMap[65] = [-1,0] // A
+keyDirectionMap[87] = [0,-1]  // W
+keyDirectionMap[68] = [1,0]  // D
+keyDirectionMap[83] = [0,1] // S
 
 //var cmap = ['#0f0f0f','#0f300f','#0f0f0f','#0f300f','#0f0f0f','#20300f','#0f0f0f','#20300f']
 var cmap = ['#0a200a','#0a300a']
@@ -412,9 +425,41 @@ window.addEventListener('keydown', function (e) {
 	}
 	
 	nextSnakeDirection = pk
-	
-
 })
+
+canvas.onmousedown = function(e) {
+	let rect = canvas.getBoundingClientRect()
+	let mx = e.clientX - rect.left
+    let my = e.clientY - rect.top
+    let halfway = (rect.right - rect.left) / 2
+    if (mx > halfway) {
+		pk = cyclicDirections( snakeDirections[0], -1 )
+    } else {
+    	pk = cyclicDirections( snakeDirections[0], 1 )
+    }
+    console.log(pk)
+    nextSnakeDirection = pk
+}
+
+function cyclicDirections( currentDirection, rotation ) {
+	console.log(currentDirection)
+
+	let map = {}
+	map[[1,0]] = 0
+	map[[0,-1]] = 1
+	map[[-1,0]] = 2
+	map[[0,1]] = 3
+	
+	let directions = []
+	directions[0] = [1,0]
+	directions[1] = [0,-1]
+	directions[2] = [-1,0]
+	directions[3] = [0,1]
+
+	let index = (map[currentDirection] + rotation) % 4
+	if (index < 0) { index += 4 } 
+	return directions[index]
+}
 
 function writeChar(x, y, charCode, fontSize) {
 	let pixels = chars[charCode]
@@ -1155,7 +1200,7 @@ X...X
 XXXXX
 ....X
 ...X.
-.XXX.
+..X..
 .X...
 X....
 XXXXX
